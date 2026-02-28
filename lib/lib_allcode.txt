@@ -1,0 +1,823 @@
+### lib/pages/main_scafold.dart
+// lib/pages/main_scafold.dart (partial, only changes shown)
+import 'package:audioplayers/audioplayers.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/material.dart';
+import 'package:mplayer/Models/song.dart';
+import 'package:mplayer/pages/favorites.dart';
+import 'package:mplayer/services/audio_player_service.dart';
+import 'package:mplayer/styles.dart';
+import 'package:mplayer/utils/folder_loader.dart';
+import 'package:mplayer/widgets/cover_art.dart';
+import 'package:mplayer/widgets/player_controls.dart';
+import 'package:mplayer/widgets/progress_bar.dart';
+import 'package:mplayer/widgets/song_info.dart'; // new
+// ... other imports
+
+class MainScafold extends StatefulWidget {
+  const MainScafold({super.key});
+
+  @override
+  State<MainScafold> createState() => _MainScaffoldState();
+}
+
+class _MainScaffoldState extends State<MainScafold>
+    with WidgetsBindingObserver {
+  final AudioPlayerService _service = AudioPlayerService();
+  double _coverOpacity = 0.0;
+  bool _controlsVisible = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      setState(() => _coverOpacity = 1.0);
+    });
+    WidgetsBinding.instance.addObserver(this); // for lifecycle
+    _service.playerStateStream.listen((state) {
+      if (!_controlsVisible &&
+          (state == PlayerState.playing || state == PlayerState.paused)) {
+        setState(() {
+          _controlsVisible = true;
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) {
+      _service.pause(); // pause when app goes to background
+    } else if(state == AppLifecycleState.resumed && _service.isPlaying==true){
+      _service.resume();
+    }
+  }
+
+  Future<void> _pickFolder() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.audio,
+      allowMultiple: true,
+    );
+    if (result != null) {
+      final songs = result.paths
+          .map(
+            (path) => Song(
+              title: path!.split('/').last.split('.').first,
+              artist: 'Unknown',
+              cover: 'default_cover.jpeg',
+              path: path,
+            ),
+          )
+          .toList();
+      _service.loadSongs(songs);
+    } else {
+      // Show snackbar
+    }
+  }
+
+  void _navigateToFavorites() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const Favorites()),
+    );
+    // Pause is handled inside Favorites page
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: _service,
+      builder: (context, _) {
+        final song = _service.currentSong;
+        if (song == null) {
+          return Scaffold(
+            backgroundColor: AppStyles.primaryColor,
+            appBar: AppBar(
+              title: Text("mPlayer", style: AppStyles.appBarTitleStyle),
+              backgroundColor: Colors.transparent,
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.folder_open, color: Colors.white),
+                  onPressed: _pickFolder,
+                ),
+              ],
+            ),
+            body: const Center(
+              child: Text(
+                'No songs loaded',
+                style: TextStyle(color: Colors.white),
+              ),
+            ),
+          );
+        }
+
+        return Scaffold(
+          backgroundColor: AppStyles.primaryColor,
+          appBar: AppBar(
+            title: Text("mPlayer", style: AppStyles.appBarTitleStyle),
+            backgroundColor: Colors.transparent,
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.folder_open, color: Colors.white),
+                onPressed: _pickFolder,
+              ),
+            ],
+          ),
+          body: SingleChildScrollView(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                const SizedBox(height: 16),
+                CoverArt(
+                  coverOpacity: _coverOpacity,
+                  imagePath: song.cover,
+                  isPaused: !_service.isPlaying,
+                ),
+                SongInfo(
+                  song: song,
+                  isFavorite: _service.isFavorite(song.path ?? ''),
+                  onFavoriteTap: () =>
+                      _service.toggleFavorite(song.path ?? ''),
+                  onFavoriteLongPress: _navigateToFavorites,
+                  isVisible: _controlsVisible, // we can always show now
+                ),
+                const SizedBox(height: 16),
+                // Progress bar
+                ProgressBar(
+                  positionStream: _service.positionStream,
+                  durationStream: _service.durationStream,
+                  onSeek: _service.seek,
+                ),
+                PlayerControls(
+                  isPaused: !_service.isPlaying,
+                  isVisible: _controlsVisible,
+                  onPlayPause: _service.playPause,
+                  onNext: _service.next,
+                  onPrevious: _service.previous,
+                ),
+                // const SizedBox(height: 16),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+
+### lib/pages/favorites.dart
+// lib/pages/favorites.dart
+import 'package:flutter/material.dart';
+import 'package:mplayer/services/audio_player_service.dart';
+import 'package:mplayer/Models/song.dart';
+import 'package:mplayer/styles.dart';
+
+class Favorites extends StatefulWidget {
+  const Favorites({super.key});
+
+  @override
+  State<Favorites> createState() => _FavoritesState();
+}
+
+class _FavoritesState extends State<Favorites> {
+  final AudioPlayerService _service = AudioPlayerService();
+  bool _pausedOnEnter = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Pause when entering
+    _service.pause();
+    _pausedOnEnter = true;
+  }
+
+  @override
+  void dispose() {
+    // Do NOT auto-resume; user must press play manually
+    // _service.resume();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Build list of favorite songs by filtering current songs with favorite paths
+    final favoriteSongs = _service.songs
+        .where((s) => _service.isFavorite(s.path ?? ''))
+        .toList();
+
+    return Scaffold(
+      backgroundColor: AppStyles.primaryColor,
+      appBar: AppBar(
+        title: const Text(
+          'Favorites',
+          style: TextStyle(color: AppStyles.textColor),
+        ),
+        backgroundColor: AppStyles.primaryColor,
+      ),
+      body: favoriteSongs.isEmpty
+          ? const Center(
+              child: Text(
+                'No favorites yet',
+                style: TextStyle(color: Colors.white),
+              ),
+            )
+          : ListView.builder(
+              itemCount: favoriteSongs.length,
+              itemBuilder: (ctx, i) {
+                final song = favoriteSongs[i];
+                return ListTile(
+                  leading: Image.asset(
+                    "assets/covers/${song.cover}",
+                    width: 48,
+                    height: 48,
+                    fit: BoxFit.cover,
+                  ),
+                  title: Text(
+                    song.title,
+                    style: const TextStyle(color: AppStyles.textColor),
+                  ),
+                  subtitle: Text(song.artist,style: const TextStyle(color: AppStyles.textColor),),
+                  onTap: () {
+                    Navigator.pop(context);
+                    final index = _service.songs.indexWhere(
+                      (s) => s.path == song.path,
+                    );
+                    if (index != -1) {
+                      _service.playIndex(index);
+                    }
+                  },
+                );
+              },
+            ),
+    );
+  }
+}
+
+
+### lib/utils/folder_loader.dart
+// lib/utils/folder_loader.dart
+import 'dart:io';
+import 'package:file_picker/file_picker.dart';
+import 'package:mplayer/Models/song.dart';
+// import 'package:permission_handler/permission_handler.dart';
+
+class FolderLoader {
+  static Future<List<Song>?> pickFolderAndLoadSongs() async {
+    // No permission request needed
+    String? selectedDirectory = await FilePicker.platform.getDirectoryPath();
+    if (selectedDirectory == null) return null;
+
+    // Scan directory for audio files
+    final dir = Directory(selectedDirectory);
+    List<Song> songs = [];
+
+    try {
+      await for (var entity in dir.list(recursive: true, followLinks: false)) {
+        if (entity is File) {
+          final path = entity.path;
+          final extension = path.split('.').last.toLowerCase();
+          if (['mp3', 'm4a', 'aac', 'wav', 'flac'].contains(extension)) {
+            // Use filename (without extension) as title, folder name as artist? Or unknown.
+            final name = path.split('/').last.split('.').first;
+            songs.add(
+              Song(
+                title: name,
+                artist: 'Unknown Artist',
+                cover: 'default_cover.png', // provide a default asset
+                path: path,
+              ),
+            );
+          }
+        }
+      }
+    } catch (e) {
+      print('Error reading folder: $e');
+      return null;
+    }
+
+    return songs;
+  }
+}
+
+
+### lib/widgets/progress_bar.dart
+// lib/widgets/progress_bar.dart
+import 'package:flutter/material.dart';
+import 'dart:async';
+
+class ProgressBar extends StatefulWidget {
+  final Stream<Duration> positionStream;
+  final Stream<Duration?> durationStream;
+  final Future<void> Function(Duration) onSeek;
+
+  const ProgressBar({
+    super.key,
+    required this.positionStream,
+    required this.durationStream,
+    required this.onSeek,
+  });
+
+  @override
+  State<ProgressBar> createState() => _ProgressBarState();
+}
+
+class _ProgressBarState extends State<ProgressBar> {
+  Duration _position = Duration.zero;
+  Duration? _duration;
+  bool _isDragging = false;
+  double _dragValue = 0.0;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.positionStream.listen((pos) {
+      if (!_isDragging) {
+        setState(() => _position = pos);
+      }
+    });
+    widget.durationStream.listen((dur) {
+      setState(() => _duration = dur);
+    });
+  }
+
+  String _formatDuration(Duration d) {
+    String twoDigits(int n) => n.toString().padLeft(2, '0');
+    final minutes = twoDigits(d.inMinutes.remainder(60));
+    final seconds = twoDigits(d.inSeconds.remainder(60));
+    return "$minutes:$seconds";
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final duration = _duration ?? Duration.zero;
+    final double max = duration.inMilliseconds.toDouble();
+    final double value = _position.inMilliseconds.toDouble().clamp(0, max);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20.0),
+      child: Column(
+        children: [
+          SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              thumbColor: Colors.orange,
+              activeTrackColor: Colors.orange,
+              inactiveTrackColor: Colors.grey,
+            ),
+            child: Slider(
+              min: 0,
+              max: max,
+              value: _isDragging ? _dragValue : value,
+              onChanged: (v) {
+                setState(() {
+                  _isDragging = true;
+                  _dragValue = v;
+                });
+              },
+              onChangeEnd: (v) {
+                widget.onSeek(Duration(milliseconds: v.round()));
+                setState(() {
+                  _isDragging = false;
+                });
+              },
+            ),
+          ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(_formatDuration(_position),
+                  style: const TextStyle(color: Colors.white)),
+              Text(_formatDuration(duration),
+                  style: const TextStyle(color: Colors.white)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+### lib/widgets/cover_art.dart
+import 'package:flutter/material.dart';
+import 'package:mplayer/styles.dart';
+class CoverArt extends StatefulWidget {
+  final double coverOpacity;
+  final String imagePath;
+  final bool isPaused;
+
+  const CoverArt({
+    super.key,
+    required this.coverOpacity,
+    required this.imagePath,
+    required this.isPaused,
+  });
+
+  @override
+  State<CoverArt> createState() => _CoverArtState();
+}
+
+class _CoverArtState extends State<CoverArt>
+    with SingleTickerProviderStateMixin {
+
+  late AnimationController _controller;
+  late Animation<double> _animation;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 700),
+    );
+
+    _animation = Tween<double>(begin: 1.0, end: 1.05).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void didUpdateWidget(CoverArt oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    if (widget.isPaused != oldWidget.isPaused) {
+      if (widget.isPaused) {
+        _controller.stop();
+        _controller.animateTo(0.0);
+      } else {
+        _controller.repeat(reverse: true);
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedOpacity(
+      opacity: widget.coverOpacity,
+      duration: const Duration(seconds: 2),
+      child: AnimatedBuilder(
+        animation: _animation,
+        builder: (_, child) {
+          return Transform.scale(
+            scale: _animation.value,
+            child: child,
+          );
+        },
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(20),
+          child: Image.asset(
+            "assets/covers/${widget.imagePath}",
+            // widget.imagePath,
+            height: AppStyles.coverSize,
+            width: AppStyles.coverSize,
+            fit: BoxFit.cover,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+### lib/widgets/song_info.dart
+import 'package:flutter/material.dart';
+import 'package:mplayer/Models/song.dart';
+import 'package:mplayer/styles.dart';
+
+class SongInfo extends StatelessWidget {
+  final Song song;
+  final bool isFavorite;
+  final VoidCallback onFavoriteTap;
+  final VoidCallback onFavoriteLongPress;
+  final bool isVisible;
+
+  const SongInfo({
+    super.key,
+    required this.song,
+    required this.isFavorite,
+    required this.onFavoriteTap,
+    required this.onFavoriteLongPress,
+    required this.isVisible,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (!isVisible) return const SizedBox(height: 100);
+
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(song.title, style: AppStyles.songTitle),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(song.artist, style: AppStyles.songArtist),
+                IconButton(
+                  onPressed: onFavoriteTap,
+                  onLongPress: onFavoriteLongPress,
+                  icon: Icon(
+                    isFavorite
+                        ? Icons.favorite
+                        : Icons.favorite_outline,
+                    color: isFavorite ? Colors.red : Colors.white,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+### lib/widgets/player_controls.dart
+import 'package:flutter/material.dart';
+import 'package:mplayer/styles.dart';
+
+class PlayerControls extends StatelessWidget {
+  final bool isPaused;
+  final bool isVisible;
+  final VoidCallback onPlayPause;
+  final VoidCallback onNext;
+  final VoidCallback onPrevious;
+
+  const PlayerControls({
+    super.key,
+    required this.isPaused,
+    required this.isVisible,
+    required this.onPlayPause,
+    required this.onNext,
+    required this.onPrevious,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        if (isVisible)
+          IconButton(
+            onPressed: onPrevious,
+            icon: const Icon(Icons.skip_previous),
+            iconSize: AppStyles.controlIconSize,
+            color: AppStyles.primaryIconColor,
+          ),
+        IconButton(
+          onPressed: onPlayPause,
+          icon: Icon(isPaused ? Icons.play_arrow : Icons.pause),
+          iconSize: AppStyles.controlIconSize,
+          color: AppStyles.primaryIconColor,
+        ),
+        if (isVisible)
+          IconButton(
+            onPressed: onNext,
+            icon: const Icon(Icons.skip_next),
+            iconSize: AppStyles.controlIconSize,
+            color: AppStyles.primaryIconColor,
+          ),
+      ],
+    );
+  }
+}
+
+### lib/main.dart
+// lib/main.dart
+import 'package:flutter/material.dart';
+import 'package:mplayer/pages/main_scafold.dart';
+import 'package:mplayer/Models/song.dart';
+import 'package:flutter/services.dart';
+import 'package:mplayer/services/audio_player_service.dart'; // new
+
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+    statusBarColor: Colors.transparent,
+    statusBarIconBrightness: Brightness.light,
+    statusBarBrightness: Brightness.dark,
+  ));
+
+  // Load default songs into service
+  final defaultSongs = [
+    Song(title: 'Abbey Road', artist: 'The Beatles', cover: 'i2.jpeg'),
+    Song(title: 'The Dark Side of the Moon', artist: 'Pink Floyd', cover: 'i1.png'),
+    Song(title: 'We Will Rock You', artist: 'Queen', cover: 'i3.jpg'),
+    Song(title: 'Survivor / I Will Survive', artist: 'Glee Cast', cover: 'i4.jpeg'),
+  ];
+  AudioPlayerService().loadSongs(defaultSongs);
+
+  runApp(const MainApp());
+}
+
+class MainApp extends StatelessWidget {
+  const MainApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const MaterialApp(
+      home: MainScafold(),
+    );
+  }
+}
+
+### lib/services/audio_player_service.dart
+// lib/services/audio_player_service.dart
+import 'dart:async';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/material.dart';
+import 'package:mplayer/Models/song.dart';
+
+class AudioPlayerService extends ChangeNotifier {
+  static final AudioPlayerService _instance = AudioPlayerService._internal();
+  factory AudioPlayerService() => _instance;
+  AudioPlayerService._internal() {
+    _initPlayer();
+  }
+
+  final AudioPlayer _player = AudioPlayer();
+  List<Song> _songs = [];
+  int _currentIndex = 0;
+  final Set<String> _favoritePaths = {}; // store by file path
+
+  // Stream controllers for UI
+  final _positionController = StreamController<Duration>.broadcast();
+  final _durationController = StreamController<Duration?>.broadcast();
+  final _playerStateController = StreamController<PlayerState>.broadcast();
+
+  // Getters
+  List<Song> get songs => _songs;
+  int get currentIndex => _currentIndex;
+  Song? get currentSong => _songs.isNotEmpty ? _songs[_currentIndex] : null;
+  bool get isPlaying => _player.state == PlayerState.playing;
+  Set<String> get favoritePaths => _favoritePaths;
+
+  // Streams for UI
+  Stream<Duration> get positionStream => _positionController.stream;
+  Stream<Duration?> get durationStream => _durationController.stream;
+  Stream<PlayerState> get playerStateStream => _playerStateController.stream;
+
+  void _initPlayer() {
+    _player.onPositionChanged.listen((pos) {
+      _positionController.add(pos);
+    });
+    _player.onDurationChanged.listen((dur) {
+      _durationController.add(dur);
+    });
+    _player.onPlayerStateChanged.listen((state) {
+      _playerStateController.add(state);
+      notifyListeners(); // for play/pause button state
+    });
+    _player.onPlayerComplete.listen((_) {
+      // Auto play next when song ends
+      next();
+    });
+  }
+
+  // Load a new list of songs (e.g., after folder selection)
+  void loadSongs(List<Song> newSongs) {
+    _songs = newSongs;
+    _currentIndex = 0;
+    _favoritePaths.clear(); // optional: reset favorites or try to preserve based on paths
+    notifyListeners();
+    if (_songs.isNotEmpty) {
+      playIndex(0);
+    }
+  }
+
+  Future<void> playIndex(int index) async {
+    if (index < 0 || index >= _songs.length) return;
+    _currentIndex = index;
+    final song = _songs[index];
+    if (song.path != null) {
+      // Play from file
+      await _player.play(DeviceFileSource(song.path!));
+    } else {
+      // Fallback: play from assets (for default songs)
+      // You'll need to copy assets to a temporary file or use AssetSource
+      // For simplicity, we'll skip or use a placeholder.
+      print('Asset playback not implemented');
+    }
+    notifyListeners();
+  }
+
+  Future<void> playPause() async {
+    if (_player.state == PlayerState.playing) {
+      await _player.pause();
+    } else {
+      await _player.resume();
+    }
+  }
+
+  Future<void> next() async {
+    if (_songs.isEmpty) return;
+    final newIndex = (_currentIndex + 1) % _songs.length;
+    await playIndex(newIndex);
+  }
+
+  Future<void> previous() async {
+    if (_songs.isEmpty) return;
+    final newIndex = (_currentIndex - 1 + _songs.length) % _songs.length;
+    await playIndex(newIndex);
+  }
+
+  Future<void> seek(Duration position) async {
+    await _player.seek(position);
+  }
+
+  void toggleFavorite(String path) {
+    if (_favoritePaths.contains(path)) {
+      _favoritePaths.remove(path);
+    } else {
+      _favoritePaths.add(path);
+    }
+    notifyListeners();
+  }
+
+  bool isFavorite(String path) => _favoritePaths.contains(path);
+
+  // Call this when app goes to background
+  Future<void> pause() async {
+    if (_player.state == PlayerState.playing) {
+      await _player.pause();
+    }
+  }
+   Future<void> resume() async {
+    if (_player.state == PlayerState.paused) {
+      await _player.resume();
+    }
+  }
+
+  @override
+  void dispose() {
+    _player.dispose();
+    _positionController.close();
+    _durationController.close();
+    _playerStateController.close();
+    super.dispose();
+  }
+}
+
+### lib/styles.dart
+import 'package:flutter/material.dart';
+
+class AppStyles {
+  // Colors
+  static const primaryColor = Color.fromARGB(255, 63, 63, 63);
+  static const accentColor = Colors.orange;
+  static const textColor = Color.fromARGB(221, 255, 255, 255);
+  static const primaryIconColor = Colors.white;
+  static const appBarBackgroundColor= Colors.black26;
+
+  // Text Styles
+  static const appBarTitleStyle = TextStyle(
+    fontSize: 32,
+    fontWeight: FontWeight.w900,
+    color: textColor,
+  );
+
+  static const songTitle = TextStyle(
+    fontSize: 24,
+    fontWeight: FontWeight.w900,
+    color: textColor,
+  );
+
+  static const songArtist = TextStyle(fontSize: 16, color: textColor);
+
+  // Image dimensions
+  static const coverSize = 320.0;
+
+  // Icon size
+  static const controlIconSize = 64.0;
+}
+
+
+### lib/Models/song.dart
+class Song {
+  final String title;
+  final String artist;
+  final String cover;  // still a filename (maybe default)
+  final String? path;  // full file path (null for default assets)
+
+  const Song({
+    required this.title,
+    required this.artist,
+    required this.cover,
+    this.path,
+  });
+}
+
