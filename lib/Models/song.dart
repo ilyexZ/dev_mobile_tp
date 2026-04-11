@@ -1,11 +1,18 @@
 class Song {
   final String title;
   final String artist;
-  final String cover;  // still a filename (maybe default)
-  final String? path;  // full file path (null for default assets)
+  final String cover;
+  final String? path;
   final String? audioAsset;
 
-  String get id => path ?? audioAsset ?? title;
+  // Use filename as id for picked songs — paths can vary across sessions on Android
+  String get id {
+    if (path != null) {
+      return path!.split('/').last; // just "mysong.mp3", always stable
+    }
+    return audioAsset ?? title;
+  }
+
   const Song({
     required this.title,
     required this.artist,

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 class AppStyles {
   // Colors
-  static const primaryColor = Color.fromARGB(255, 63, 63, 63);
+  static const primaryColor = Color.fromARGB(255, 56, 38, 63);
   static const accentColor = Colors.orange;
   static const textColor = Color.fromARGB(221, 255, 255, 255);
   static const primaryIconColor = Colors.white;

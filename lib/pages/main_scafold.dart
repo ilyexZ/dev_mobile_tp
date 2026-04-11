@@ -1,5 +1,4 @@
 // lib/pages/main_scafold.dart
-
 import 'package:audioplayers/audioplayers.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -30,13 +29,10 @@ class _MainScaffoldState extends State<MainScafold>
   @override
   void initState() {
     super.initState();
-
     WidgetsBinding.instance.addObserver(this);
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      setState(() => _coverOpacity = 1.0);
-    });
-
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => setState(() => _coverOpacity = 1.0),
+    );
     _service.playerStateStream.listen((state) {
       if (!_controlsVisible &&
           (state == PlayerState.playing || state == PlayerState.paused)) {
@@ -53,39 +49,40 @@ class _MainScaffoldState extends State<MainScafold>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused) {
-      if (_service.isPlaying) {
-        _service.pause();
-        _pausedByLifecycle = true;
-      }
-    } else if (state == AppLifecycleState.resumed) {
-      if (_pausedByLifecycle) {
-        _service.resume();
-        _pausedByLifecycle = false;
-      }
+    if (state == AppLifecycleState.paused && _service.isPlaying) {
+      _service.pause();
+      _pausedByLifecycle = true;
+    } else if (state == AppLifecycleState.resumed && _pausedByLifecycle) {
+      _service.resume();
+      _pausedByLifecycle = false;
     }
   }
 
-  Future<void> _pickFolder() async {
+  // ── File picker ───────────────────────────────────────────────────────────
+  Future<void> _pickFiles() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.audio,
       allowMultiple: true,
     );
 
-    if (result != null) {
-      final songs = result.paths
-          .map(
-            (path) => Song(
-              title: path!.split('/').last.split('.').first,
-              artist: 'Unknown',
-              cover: 'default_cover.jpeg',
-              path: path,
-            ),
-          )
-          .toList();
+    if (result == null) return;
 
-      _service.loadSongs(songs);
-      await _service.playIndex(0);
+    final picked = result.paths
+        .whereType<String>() // drop any nulls
+        .map((path) {
+          final normalized = Uri.file(path).toFilePath(); // normalize the path
+          return Song(
+            title: normalized.split('/').last.split('.').first,
+            artist: 'Unknown',
+            cover: 'default_cover.jpeg',
+            path: normalized,
+          );
+        })
+        .toList();
+
+    final firstIndex = _service.addPickedSongs(picked);
+    if (firstIndex != null) {
+      await _service.playIndex(firstIndex);
     }
   }
 
@@ -96,19 +93,17 @@ class _MainScaffoldState extends State<MainScafold>
     );
   }
 
+  // ── Build ─────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
       listenable: _service,
       builder: (context, _) {
         final song = _service.currentSong;
-
         return Scaffold(
           backgroundColor: AppStyles.primaryColor,
           appBar: _buildAppBar(),
-          body: song == null
-              ? _buildEmptyState()
-              : _buildPlayer(song),
+          body: song == null ? _buildEmptyState() : _buildPlayer(song),
         );
       },
     );
@@ -118,31 +113,26 @@ class _MainScaffoldState extends State<MainScafold>
     return AppBar(
       leading: Center(
         child: Image.asset(
-          "assets/icon/icon.jpeg",
+          'assets/icon/icon.jpeg',
           height: 40,
           width: 40,
-           fit: BoxFit.cover,
+          fit: BoxFit.cover,
         ),
       ),
-      title: Text("mPlayer", style: AppStyles.appBarTitleStyle),
+      title: Text('mPlayer', style: AppStyles.appBarTitleStyle),
       backgroundColor: Colors.transparent,
       actions: [
         IconButton(
           icon: const Icon(Icons.folder_open, color: Colors.white),
-          onPressed: _pickFolder,
+          onPressed: _pickFiles,
         ),
       ],
     );
   }
 
-  Widget _buildEmptyState() {
-    return const Center(
-      child: Text(
-        'No songs loaded',
-        style: TextStyle(color: Colors.white),
-      ),
-    );
-  }
+  Widget _buildEmptyState() => const Center(
+    child: Text('No songs loaded', style: TextStyle(color: Colors.white)),
+  );
 
   Widget _buildPlayer(Song song) {
     return SingleChildScrollView(
@@ -150,29 +140,24 @@ class _MainScaffoldState extends State<MainScafold>
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
           const SizedBox(height: 16),
-
           CoverArt(
             coverOpacity: _coverOpacity,
             imagePath: song.cover,
             isPaused: !_service.isPlaying,
           ),
-
           SongInfo(
             song: song,
             isFavorite: _service.isFavorite(song.id),
-            onFavoriteTap: () => _service.toggleFavorite(song.id),
+            onFavoriteTap: () => _service.toggleFavorite(song.id, song: song),
             onFavoriteLongPress: _navigateToFavorites,
             isVisible: _controlsVisible,
           ),
-
           const SizedBox(height: 16),
-
           ProgressBar(
             positionStream: _service.positionStream,
             durationStream: _service.durationStream,
             onSeek: _service.seek,
           ),
-
           PlayerControls(
             isPaused: !_service.isPlaying,
             isVisible: _controlsVisible,
@@ -180,6 +165,7 @@ class _MainScaffoldState extends State<MainScafold>
             onNext: _service.next,
             onPrevious: _service.previous,
           ),
+          const SizedBox(height: 24),
         ],
       ),
     );
