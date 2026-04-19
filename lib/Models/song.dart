@@ -5,11 +5,10 @@ class Song {
   final String? path;
   final String? audioAsset;
 
-  // Use filename as id for picked songs — paths can vary across sessions on Android
+  // Filename is used as id for picked songs — full paths can vary across
+  // sessions on Android, but the filename is always stable.
   String get id {
-    if (path != null) {
-      return path!.split('/').last; // just "mysong.mp3", always stable
-    }
+    if (path != null) return path!.split('/').last;
     return audioAsset ?? title;
   }
 

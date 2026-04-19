@@ -1,4 +1,3 @@
-// lib/services/audio_player_service.dart
 import 'dart:async';
 import 'dart:collection';
 
@@ -17,48 +16,30 @@ class AudioPlayerService extends ChangeNotifier {
 
   final AudioPlayer _player = AudioPlayer();
 
-  // ── Collections backed by LinkedHashMap ───────────────────────────────────
-  // Key = song.id (path | audioAsset | title).
-  // Inserting the same key a second time just overwrites – no duplicates ever.
-
-  /// All songs available to the player (defaults + picked files).
-  final LinkedHashMap<String, Song> _songsMap = LinkedHashMap();
-
-  /// Mirror of the DB rows; used as the source for the Favorites page.
+  // Key = song.id (filename for picked files, audioAsset or title for defaults).
+  final LinkedHashMap<String, Song> _songsMap        = LinkedHashMap();
   final LinkedHashMap<String, Song> _favoriteSongsMap = LinkedHashMap();
 
-  // ── State ─────────────────────────────────────────────────────────────────
   int _currentIndex = 0;
 
-  // Streams
-  final _positionController = StreamController<Duration>.broadcast();
-  final _durationController = StreamController<Duration?>.broadcast();
+  final _positionController    = StreamController<Duration>.broadcast();
+  final _durationController    = StreamController<Duration?>.broadcast();
   final _playerStateController = StreamController<PlayerState>.broadcast();
 
-  // ── Getters ────────────────────────────────────────────────────────────────
-  List<Song> get songs => _songsMap.values.toList();
+  // ── Getters ───────────────────────────────────────────────────────────────
+  List<Song> get songs         => _songsMap.values.toList();
   List<Song> get favoriteSongs => _favoriteSongsMap.values.toList();
 
-  int get currentIndex => _currentIndex;
-  Song? get currentSong =>
+  int   get currentIndex => _currentIndex;
+  Song? get currentSong  =>
       _songsMap.isNotEmpty ? _songsMap.values.elementAt(_currentIndex) : null;
-  bool get isPlaying => _player.state == PlayerState.playing;
+  bool  get isPlaying    => _player.state == PlayerState.playing;
 
-  Stream<Duration> get positionStream => _positionController.stream;
-  Stream<Duration?> get durationStream => _durationController.stream;
+  Stream<Duration>  get positionStream    => _positionController.stream;
+  Stream<Duration?> get durationStream    => _durationController.stream;
   Stream<PlayerState> get playerStateStream => _playerStateController.stream;
 
-  // ── DB restore ─────────────────────────────────────────────────────────────
-  Future<void> _loadFavoritesFromDb() async {
-    final saved = await DatabaseHelper.instance.getAllFavorites();
-    for (final s in saved) {
-      _favoriteSongsMap[s.id] = s; // overwrites if somehow already there
-      _songsMap[s.id] = s; // merge back into playable list
-    }
-    notifyListeners();
-  }
-
-  // ── Player setup ───────────────────────────────────────────────────────────
+  // ── Initialisation ────────────────────────────────────────────────────────
   void _initPlayer() {
     _player.onPositionChanged.listen((p) => _positionController.add(p));
     _player.onDurationChanged.listen((d) => _durationController.add(d));
@@ -69,39 +50,35 @@ class AudioPlayerService extends ChangeNotifier {
     _player.onPlayerComplete.listen((_) => next());
   }
 
-  // ── Song management ────────────────────────────────────────────────────────
-
-  /// Initial load for default asset songs (called from main.dart once).
-  void loadSongs(List<Song> newSongs) {
-    for (final s in newSongs) {
-      _songsMap[s.id] = s; // map key guarantees no duplicates
+  Future<void> _loadFavoritesFromDb() async {
+    final saved = await DatabaseHelper.instance.getAllFavorites();
+    for (final s in saved) {
+      _favoriteSongsMap[s.id] = s;
+      _songsMap[s.id]         = s;
     }
     notifyListeners();
   }
 
-  /// Append user-picked files.  Returns the index of the first NEW song
-  /// so the caller can start playback there.
-  /// Picking the same file again is silently ignored.
-  int? addPickedSongs(List<Song> picked) {
-    final beforeCount = _songsMap.length;
-
-    // Collect existing paths (not just keys) to guard against any path variant
-    final existingPaths = _songsMap.values
-        .map((s) => s.path)
-        .whereType<String>()
-        .toSet();
-
-    for (final s in picked) {
-      // Skip if this path is already loaded under ANY key
-      if (s.path != null && existingPaths.contains(s.path)) continue;
+  // ── Song management ───────────────────────────────────────────────────────
+  void loadSongs(List<Song> newSongs) {
+    for (final s in newSongs) {
       _songsMap[s.id] = s;
     }
+    notifyListeners();
+  }
 
+  /// Appends newly picked files. Returns the index of the first new song,
+  /// or null if every picked file was already in the list.
+  int? addPickedSongs(List<Song> picked) {
+    final beforeCount = _songsMap.length;
+    for (final s in picked) {
+      _songsMap[s.id] = s; // duplicate key → silent overwrite, no change in length
+    }
     notifyListeners();
     return _songsMap.length > beforeCount ? beforeCount : null;
   }
 
-  // ── Playback ───────────────────────────────────────────────────────────────
+  // ── Playback ──────────────────────────────────────────────────────────────
   Future<void> playIndex(int index) async {
     final list = _songsMap.values.toList();
     if (index < 0 || index >= list.length) return;
@@ -138,19 +115,17 @@ class AudioPlayerService extends ChangeNotifier {
 
   Future<void> seek(Duration position) async => _player.seek(position);
 
-  // ── Favourites ─────────────────────────────────────────────────────────────
+  // ── Favourites ────────────────────────────────────────────────────────────
   bool isFavorite(String songId) => _favoriteSongsMap.containsKey(songId);
 
   Future<void> toggleFavorite(String songId, {Song? song}) async {
     if (_favoriteSongsMap.containsKey(songId)) {
-      // ── Remove ────────────────────────────────────────────────────────────
       _favoriteSongsMap.remove(songId);
       await DatabaseHelper.instance.deleteFavorite(songId);
     } else {
-      // ── Add ───────────────────────────────────────────────────────────────
       final target = song ?? _songsMap[songId];
       if (target != null) {
-        _favoriteSongsMap[songId] = target; // map key = no duplicates
+        _favoriteSongsMap[songId] = target;
         await DatabaseHelper.instance.insertFavorite(target);
       }
     }
@@ -163,7 +138,7 @@ class AudioPlayerService extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ── Lifecycle ──────────────────────────────────────────────────────────────
+  // ── Lifecycle ─────────────────────────────────────────────────────────────
   Future<void> pause() async {
     if (_player.state == PlayerState.playing) await _player.pause();
   }

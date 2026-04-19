@@ -1,4 +1,3 @@
-// lib/pages/favorites.dart
 import 'package:flutter/material.dart';
 import 'package:mplayer/Models/song.dart';
 import 'package:mplayer/services/audio_player_service.dart';
@@ -23,13 +22,13 @@ class _FavoritesState extends State<Favorites> {
     _service.pause();
   }
 
-  // ── Clear all confirmation ────────────────────────────────────────────────
-  Future<void> _confirmClearAll() async {
-    final confirm = await showDialog<bool>(
+  // ── Dialogs ───────────────────────────────────────────────────────────────
+  Future<bool> _confirm({required String title, required String content, String confirmLabel = 'OK'}) async {
+    final result = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title  : const Text('Clear all favourites'),
-        content: const Text('This will remove every song from your favourites. Continue?'),
+        title  : Text(title),
+        content: Text(content),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -37,24 +36,39 @@ class _FavoritesState extends State<Favorites> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child    : const Text('Clear', style: TextStyle(color: Colors.red)),
+            child    : Text(confirmLabel, style: const TextStyle(color: Colors.red)),
           ),
         ],
       ),
     );
+    return result == true;
+  }
 
-    if (confirm == true) {
+  Future<void> _confirmClearAll() async {
+    if (await _confirm(
+      title  : 'Clear all favourites',
+      content: 'This will remove every song from your favourites. Continue?',
+      confirmLabel: 'Clear',
+    )) {
       await _service.clearAllFavorites();
       setState(() => _selectedSong = null);
     }
   }
 
-  // ── List ──────────────────────────────────────────────────────────────────
+  Future<void> _confirmRemove(Song song) async {
+    if (await _confirm(
+      title  : 'Remove from Favorites',
+      content: 'Remove this song from favorites?',
+      confirmLabel: 'Remove',
+    )) {
+      await _service.toggleFavorite(song.id, song: song);
+      setState(() {
+        if (_selectedSong?.id == song.id) _selectedSong = null;
+      });
+    }
+  }
 
-  /// KEY FIX: read from [_service.favoriteSongs] (the DB mirror) instead of
-  /// filtering [_service.songs].  This means picked files from previous
-  /// sessions show up correctly even though they are not in the current
-  /// in-memory playlist until they are merged back in on startup.
+  // ── List ──────────────────────────────────────────────────────────────────
   Widget _buildList(List<Song> favoriteSongs) {
     if (favoriteSongs.isEmpty) {
       return const Center(
@@ -66,34 +80,8 @@ class _FavoritesState extends State<Favorites> {
       itemCount  : favoriteSongs.length,
       itemBuilder: (ctx, i) {
         final song = favoriteSongs[i];
-
         return GestureDetector(
-          onLongPress: () async {
-            final confirm = await showDialog<bool>(
-              context: context,
-              builder: (ctx) => AlertDialog(
-                title  : const Text('Remove from Favorites'),
-                content: const Text('Remove this song from favorites?'),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(ctx, false),
-                    child    : const Text('Cancel'),
-                  ),
-                  TextButton(
-                    onPressed: () => Navigator.pop(ctx, true),
-                    child    : const Text('Remove'),
-                  ),
-                ],
-              ),
-            );
-
-            if (confirm == true) {
-              await _service.toggleFavorite(song.id, song: song);
-              setState(() {
-                if (_selectedSong?.id == song.id) _selectedSong = null;
-              });
-            }
-          },
+          onLongPress: () => _confirmRemove(song),
           child: FavoriteTile(
             song      : song,
             isSelected: _selectedSong?.id == song.id,
@@ -114,21 +102,18 @@ class _FavoritesState extends State<Favorites> {
     return ListenableBuilder(
       listenable: _service,
       builder   : (context, _) {
-        // ← use favoriteSongs (DB mirror), not songs.where(isFavorite)
         final favoriteSongs = _service.favoriteSongs;
 
         return Scaffold(
           backgroundColor: AppStyles.primaryColor,
           appBar: AppBar(
-            title          : const Text('Favorites',
-                style: TextStyle(color: AppStyles.textColor)),
+            title          : const Text('Favorites', style: TextStyle(color: AppStyles.textColor)),
             backgroundColor: AppStyles.primaryColor,
             actions: [
-              // Clear all button
               if (favoriteSongs.isNotEmpty)
                 IconButton(
-                  icon   : const Icon(Icons.delete_sweep, color: Colors.white),
-                  tooltip: 'Clear all favourites',
+                  icon     : const Icon(Icons.delete_sweep, color: Colors.white),
+                  tooltip  : 'Clear all favourites',
                   onPressed: _confirmClearAll,
                 ),
             ],

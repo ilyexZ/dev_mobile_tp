@@ -1,4 +1,3 @@
-// lib/db/database_helper.dart
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import 'package:mplayer/Models/song.dart';
@@ -37,18 +36,14 @@ class DatabaseHelper {
 
   Future<void> insertFavorite(Song song) async {
     final db = await database;
-    await db.insert(
-      'favorites',
-      {
-        'song_id'    : song.id,
-        'title'      : song.title,
-        'artist'     : song.artist,
-        'cover'      : song.cover,
-        'path'       : song.path,
-        'audio_asset': song.audioAsset,
-      },
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await db.insert('favorites', {
+      'song_id': song.id,
+      'title': song.title,
+      'artist': song.artist,
+      'cover': song.cover,
+      'path': song.path,
+      'audio_asset': song.audioAsset,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   Future<void> deleteFavorite(String songId) async {
@@ -63,16 +58,21 @@ class DatabaseHelper {
   }
 
   Future<List<Song>> getAllFavorites() async {
-    final db   = await database;
+    final db = await database;
     final rows = await db.query('favorites');
     return rows
-        .map((row) => Song(
-              title     : row['title']       as String,
-              artist    : row['artist']      as String,
-              cover     : row['cover']       as String,
-              path      : row['path']        as String?,
-              audioAsset: row['audio_asset'] as String?,
-            ))
+        .map(
+          (row) => Song(
+            title: row['title'] as String,
+            artist: row['artist'] as String,
+            cover: row['cover'] as String,
+            path: row['path'] as String?,
+            audioAsset: row['audio_asset'] as String?,
+          ),
+        )
         .toList();
   }
 }
+
+
+//  adb exec-out run-as com.example.mplayer cat /data/data/com.example.mplayer/databases/favorites.db > favorites.db  

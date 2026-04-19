@@ -1,4 +1,3 @@
-// lib/pages/main_scafold.dart
 import 'package:audioplayers/audioplayers.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -18,13 +17,12 @@ class MainScafold extends StatefulWidget {
   State<MainScafold> createState() => _MainScaffoldState();
 }
 
-class _MainScaffoldState extends State<MainScafold>
-    with WidgetsBindingObserver {
+class _MainScaffoldState extends State<MainScafold> with WidgetsBindingObserver {
   final AudioPlayerService _service = AudioPlayerService();
 
-  double _coverOpacity = 0.0;
-  bool _controlsVisible = false;
-  bool _pausedByLifecycle = false;
+  double _coverOpacity      = 0.0;
+  bool   _controlsVisible   = false;
+  bool   _pausedByLifecycle = false;
 
   @override
   void initState() {
@@ -61,29 +59,26 @@ class _MainScaffoldState extends State<MainScafold>
   // ── File picker ───────────────────────────────────────────────────────────
   Future<void> _pickFiles() async {
     final result = await FilePicker.platform.pickFiles(
-      type: FileType.audio,
+      type        : FileType.audio,
       allowMultiple: true,
     );
-
     if (result == null) return;
 
     final picked = result.paths
-        .whereType<String>() // drop any nulls
+        .whereType<String>()
         .map((path) {
-          final normalized = Uri.file(path).toFilePath(); // normalize the path
+          final normalized = Uri.file(path).toFilePath();
           return Song(
-            title: normalized.split('/').last.split('.').first,
+            title : normalized.split('/').last.split('.').first,
             artist: 'Unknown',
-            cover: 'default_cover.jpeg',
-            path: normalized,
+            cover : 'default_cover.jpeg',
+            path  : normalized,
           );
         })
         .toList();
 
     final firstIndex = _service.addPickedSongs(picked);
-    if (firstIndex != null) {
-      await _service.playIndex(firstIndex);
-    }
+    if (firstIndex != null) await _service.playIndex(firstIndex);
   }
 
   void _navigateToFavorites() {
@@ -98,12 +93,12 @@ class _MainScaffoldState extends State<MainScafold>
   Widget build(BuildContext context) {
     return ListenableBuilder(
       listenable: _service,
-      builder: (context, _) {
+      builder   : (context, _) {
         final song = _service.currentSong;
         return Scaffold(
           backgroundColor: AppStyles.primaryColor,
-          appBar: _buildAppBar(),
-          body: song == null ? _buildEmptyState() : _buildPlayer(song),
+          appBar         : _buildAppBar(),
+          body           : song == null ? _buildEmptyState() : _buildPlayer(song),
         );
       },
     );
@@ -115,15 +110,15 @@ class _MainScaffoldState extends State<MainScafold>
         child: Image.asset(
           'assets/icon/icon.jpeg',
           height: 40,
-          width: 40,
-          fit: BoxFit.cover,
+          width : 40,
+          fit   : BoxFit.cover,
         ),
       ),
-      title: Text('mPlayer', style: AppStyles.appBarTitleStyle),
+      title          : Text('mPlayer', style: AppStyles.appBarTitleStyle),
       backgroundColor: Colors.transparent,
       actions: [
         IconButton(
-          icon: const Icon(Icons.folder_open, color: Colors.white),
+          icon     : const Icon(Icons.folder_open, color: Colors.white),
           onPressed: _pickFiles,
         ),
       ],
@@ -142,28 +137,28 @@ class _MainScaffoldState extends State<MainScafold>
           const SizedBox(height: 16),
           CoverArt(
             coverOpacity: _coverOpacity,
-            imagePath: song.cover,
-            isPaused: !_service.isPlaying,
+            imagePath   : song.cover,
+            isPaused    : !_service.isPlaying,
           ),
           SongInfo(
-            song: song,
-            isFavorite: _service.isFavorite(song.id),
-            onFavoriteTap: () => _service.toggleFavorite(song.id, song: song),
+            song               : song,
+            isFavorite         : _service.isFavorite(song.id),
+            onFavoriteTap      : () => _service.toggleFavorite(song.id, song: song),
             onFavoriteLongPress: _navigateToFavorites,
-            isVisible: _controlsVisible,
+            isVisible          : _controlsVisible,
           ),
           const SizedBox(height: 16),
           ProgressBar(
             positionStream: _service.positionStream,
             durationStream: _service.durationStream,
-            onSeek: _service.seek,
+            onSeek        : _service.seek,
           ),
           PlayerControls(
-            isPaused: !_service.isPlaying,
-            isVisible: _controlsVisible,
+            isPaused   : !_service.isPlaying,
+            isVisible  : _controlsVisible,
             onPlayPause: _service.playPause,
-            onNext: _service.next,
-            onPrevious: _service.previous,
+            onNext     : _service.next,
+            onPrevious : _service.previous,
           ),
           const SizedBox(height: 24),
         ],
