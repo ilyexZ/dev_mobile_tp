@@ -1,23 +1,23 @@
-// ══════════════════════════════════════════════════════════════════════════════
-// ACTIVE IMPLEMENTATION: Native Android Foreground Service
-//   Communicates via MethodChannel / EventChannel (see native_audio_channel.dart
-//   and the Kotlin MusicService / MainActivity).
+// lib/services/audio_player_service_legacy.dart
 //
-// TO SWAP BACK TO audioplayers:
-//   1. Delete (or rename) this file.
-//   2. Copy  lib/services/audio_player_service_legacy.dart
-//      →     lib/services/audio_player_service.dart
-//   3. Re-enable the audioplayers dependency in pubspec.yaml if it was removed.
-//   4. Remove the MusicService / MainActivity Kotlin changes from android/.
+// ══════════════════════════════════════════════════════════════════════════════
+// LEGACY IMPLEMENTATION: audioplayers package
+//
+// TO SWAP BACK:
+//   1. Delete (or rename) lib/services/audio_player_service.dart.
+//   2. Copy this file → lib/services/audio_player_service.dart.
+//   3. Ensure pubspec.yaml has:  audioplayers: ^6.x.x
+//   4. You can safely revert the Kotlin MusicService / MainActivity to the
+//      original versions (no foreground service needed by this implementation).
 // ══════════════════════════════════════════════════════════════════════════════
 
 import 'dart:async';
 import 'dart:collection';
 
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:mplayer/Models/song.dart';
 import 'package:mplayer/db/database_helper.dart';
-import 'package:mplayer/services/native_audio_channel.dart';
 
 class AudioPlayerService extends ChangeNotifier {
   // ── Singleton ─────────────────────────────────────────────────────────────
@@ -26,80 +26,51 @@ class AudioPlayerService extends ChangeNotifier {
 
   AudioPlayerService._internal() {
     _loadFavoritesFromDb();
-    _listenToNativeEvents();
+    _setupPlayerListeners();
   }
+
+  // ── Player ────────────────────────────────────────────────────────────────
+  final AudioPlayer _player = AudioPlayer();
 
   // ── Song lists ────────────────────────────────────────────────────────────
-  final LinkedHashMap<String, Song> _songsMap = LinkedHashMap();
+  final LinkedHashMap<String, Song> _songsMap         = LinkedHashMap();
   final LinkedHashMap<String, Song> _favoriteSongsMap = LinkedHashMap();
 
-  int _currentIndex = 0;
-  bool _isPlaying = false;
+  int  _currentIndex = 0;
+  bool _isPlaying    = false;
 
-  // ── Streams ───────────────────────────────────────────────────────────────
-  final _positionController = StreamController<Duration>.broadcast();
-  final _durationController = StreamController<Duration?>.broadcast();
+  // ── Streams (re-exposed so widgets keep the same API) ─────────────────────
+  Stream<Duration>  get positionStream    => _player.onPositionChanged;
+  Stream<Duration?> get durationStream    => _player.onDurationChanged;
 
-  // Emits `true` when playing, `false` when paused/stopped.
-  final _stateController = StreamController<bool>.broadcast();
+  /// Emits `true` when playing, `false` when paused/stopped.
+  Stream<bool> get playerStateStream =>
+      _player.onPlayerStateChanged.map((s) => s == PlayerState.playing);
 
   // ── Public getters ────────────────────────────────────────────────────────
-  List<Song> get songs => _songsMap.values.toList();
+  List<Song> get songs         => _songsMap.values.toList();
   List<Song> get favoriteSongs => _favoriteSongsMap.values.toList();
 
-  int get currentIndex => _currentIndex;
-  Song? get currentSong =>
+  int   get currentIndex => _currentIndex;
+  Song? get currentSong  =>
       _songsMap.isNotEmpty ? _songsMap.values.elementAt(_currentIndex) : null;
-  bool get isPlaying => _isPlaying;
+  bool  get isPlaying    => _isPlaying;
 
-  Stream<Duration> get positionStream => _positionController.stream;
-  Stream<Duration?> get durationStream => _durationController.stream;
-
-  /// Emits `true` (playing) or `false` (paused / stopped).
-  Stream<bool> get playerStateStream => _stateController.stream;
-
-  // ── Native EventChannel listener ──────────────────────────────────────────
-  void _listenToNativeEvents() {
-    NativeAudioChannel.events.listen((event) {
-      switch (event['type'] as String?) {
-        case 'position':
-          final pos = event['position'] as int? ?? 0;
-          final dur = event['duration'] as int? ?? 0;
-          _positionController.add(Duration(milliseconds: pos));
-          if (dur > 0) _durationController.add(Duration(milliseconds: dur));
-          break;
-
-        case 'stateChanged':
-          final playing = event['isPlaying'] as bool? ?? false;
-          _isPlaying = playing;
-          _stateController.add(playing);
-          notifyListeners();
-          break;
-
-        case 'completion':
-          // Song finished naturally → auto-advance
-          next();
-          break;
-
-        case 'prev':
-          // Notification Previous button tapped
-          previous();
-          break;
-
-        case 'next':
-          // Notification Next button tapped
-          next();
-          break;
-      }
+  // ── Internal setup ────────────────────────────────────────────────────────
+  void _setupPlayerListeners() {
+    _player.onPlayerStateChanged.listen((state) {
+      _isPlaying = state == PlayerState.playing;
+      notifyListeners();
     });
+
+    _player.onPlayerComplete.listen((_) => next());
   }
 
-  // ── Initialisation ────────────────────────────────────────────────────────
   Future<void> _loadFavoritesFromDb() async {
     final saved = await DatabaseHelper.instance.getAllFavorites();
     for (final s in saved) {
       _favoriteSongsMap[s.id] = s;
-      _songsMap[s.id] = s;
+      _songsMap[s.id]         = s;
     }
     notifyListeners();
   }
@@ -130,34 +101,23 @@ class AudioPlayerService extends ChangeNotifier {
     _currentIndex = index;
     final song = list[index];
 
-    try {
-      if (song.path != null) {
-        await NativeAudioChannel.playFile(song.path!, song.title, song.artist);
-      } else if (song.audioAsset != null) {
-        await NativeAudioChannel.playAsset(
-          song.audioAsset!,
-          song.title,
-          song.artist,
-        );
-      } else {
-        throw Exception('Song has no audio source');
-      }
-      notifyListeners();
-    } catch (e) {
-      debugPrint('Playback failed: $e');
+    if (song.path != null) {
+      await _player.play(DeviceFileSource(song.path!));
+    } else if (song.audioAsset != null) {
+      await _player.play(AssetSource(song.audioAsset!));
     }
+    notifyListeners();
   }
 
   Future<void> playPause() async {
     if (_isPlaying) {
-      await NativeAudioChannel.pause();
+      await _player.pause();
     } else {
-      // Nothing has ever been played → start the current index from the top.
-      final pos = await NativeAudioChannel.getPosition();
-      if (pos == Duration.zero) {
+      final pos = await _player.getCurrentPosition();
+      if (pos == null || pos == Duration.zero) {
         await playIndex(_currentIndex);
       } else {
-        await NativeAudioChannel.resume();
+        await _player.resume();
       }
     }
   }
@@ -172,7 +132,11 @@ class AudioPlayerService extends ChangeNotifier {
     await playIndex((_currentIndex - 1 + _songsMap.length) % _songsMap.length);
   }
 
-  Future<void> seek(Duration position) => NativeAudioChannel.seek(position);
+  Future<void> seek(Duration position) => _player.seek(position);
+
+  // ── These are kept so Favorites page compiles without changes ─────────────
+  Future<void> pause()  => _player.pause();
+  Future<void> resume() => _player.resume();
 
   // ── Favourites ────────────────────────────────────────────────────────────
   bool isFavorite(String songId) => _favoriteSongsMap.containsKey(songId);
@@ -197,16 +161,10 @@ class AudioPlayerService extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ── Kept so Favorites page compiles without changes ───────────────────────
-  Future<void> pause()  => NativeAudioChannel.pause();
-  Future<void> resume() => NativeAudioChannel.resume();
-
   // ── Lifecycle ─────────────────────────────────────────────────────────────
   @override
   void dispose() {
-    _positionController.close();
-    _durationController.close();
-    _stateController.close();
+    _player.dispose();
     super.dispose();
   }
 }

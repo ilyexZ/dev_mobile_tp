@@ -1,4 +1,12 @@
-import 'package:audioplayers/audioplayers.dart';
+// lib/pages/main_scafold.dart
+//
+// Changes vs. original:
+//  • Removed WidgetsBindingObserver + didChangeAppLifecycleState.
+//    The native Foreground Service keeps audio alive when the app is in
+//    the background, so we must NOT pause on lifecycle events.
+//  • playerStateStream now emits bool instead of PlayerState, so the
+//    listener checks the bool directly.
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:mplayer/Models/song.dart';
@@ -17,49 +25,34 @@ class MainScafold extends StatefulWidget {
   State<MainScafold> createState() => _MainScaffoldState();
 }
 
-class _MainScaffoldState extends State<MainScafold> with WidgetsBindingObserver {
+class _MainScaffoldState extends State<MainScafold> {
   final AudioPlayerService _service = AudioPlayerService();
 
-  double _coverOpacity      = 0.0;
-  bool   _controlsVisible   = false;
-  bool   _pausedByLifecycle = false;
+  double _coverOpacity    = 0.0;
+  bool   _controlsVisible = false;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
+
+    // Fade in the cover art after the first frame
     WidgetsBinding.instance.addPostFrameCallback(
       (_) => setState(() => _coverOpacity = 1.0),
     );
-    _service.playerStateStream.listen((state) {
-      if (!_controlsVisible &&
-          (state == PlayerState.playing || state == PlayerState.paused)) {
+
+    // Show controls as soon as playback starts for the first time.
+    // playerStateStream now emits bool (true = playing, false = paused/stopped).
+    _service.playerStateStream.listen((isPlaying) {
+      if (!_controlsVisible && isPlaying) {
         setState(() => _controlsVisible = true);
       }
     });
   }
 
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused && _service.isPlaying) {
-      _service.pause();
-      _pausedByLifecycle = true;
-    } else if (state == AppLifecycleState.resumed && _pausedByLifecycle) {
-      _service.resume();
-      _pausedByLifecycle = false;
-    }
-  }
-
   // ── File picker ───────────────────────────────────────────────────────────
   Future<void> _pickFiles() async {
     final result = await FilePicker.platform.pickFiles(
-      type        : FileType.audio,
+      type         : FileType.audio,
       allowMultiple: true,
     );
     if (result == null) return;
@@ -160,7 +153,7 @@ class _MainScaffoldState extends State<MainScafold> with WidgetsBindingObserver 
             onNext     : _service.next,
             onPrevious : _service.previous,
           ),
-          const SizedBox(height: 24),
+          // const SizedBox(height: 16),
         ],
       ),
     );

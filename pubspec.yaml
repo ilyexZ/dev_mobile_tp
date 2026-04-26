@@ -37,6 +37,11 @@ flutter:
     - assets/covers/
     - assets/audio/
     - assets/icon/ 
+    - assets/covers/
+    - assets/audio/abbey_road.mp3
+    - assets/audio/dark_side.mp3
+    - assets/audio/we_will_rock_you.mp3
+    - assets/audio/survivor.mp3
 flutter_launcher_icons:
   android: true
   ios: true

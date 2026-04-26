@@ -38,7 +38,11 @@ android {
         }
     }
 }
-
+dependencies {
+    // Required for androidx.media.app.NotificationCompat.MediaStyle
+    // (the 3-button expanded media notification)
+    implementation("androidx.media:media:1.7.0")
+}
 flutter {
     source = "../.."
 }
