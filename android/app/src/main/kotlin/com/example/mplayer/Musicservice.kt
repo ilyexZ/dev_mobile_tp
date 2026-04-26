@@ -95,7 +95,6 @@ class MusicService : Service() {
         currentTitle = title
         try {
             releasePlayer()
-            // ✅ Fix: assets are stored under flutter_assets/assets/ in the APK
             val afd = assets.openFd("flutter_assets/assets/$flutterAssetPath")
             mediaPlayer =
                     MediaPlayer().apply {
